@@ -38,6 +38,7 @@ from . import schnorr
 from . import util
 import struct
 import warnings
+import crcmod
 
 #
 # Workalike python implementation of Bitcoin's CDataStream class.
@@ -376,12 +377,28 @@ class Transaction:
     SIGHASH_FORKID = 0x40  # do not use this; deprecated
     FORKID = 0x000000  # do not use this; deprecated
 
+    # Used by hardware wallet to identify which output contains the 'change'
+    def set_change_address(self,change_addrs,change_index):
+        if (change_addrs==None):
+            self.change_addrs="";
+            self.change_index=-1;
+        else:
+            self.change_addrs=change_addrs
+            self.change_index=change_index
+
+        self.raw = None
+
+    # Used by hardware wallet to set the derivation path/account: m/44'/0'/account'
+    def set_derivation_account(self,account):
+        self.derivation_account=int(account)
+        self.raw = None
+
     def __str__(self):
         if self.raw is None:
             self.raw = self.serialize()
         return self.raw
 
-    def __init__(self, raw, sign_schnorr=False):
+    def __init__(self, raw, is_hw_wallet, sign_schnorr=False):
         if raw is None:
             self.raw = None
         elif isinstance(raw, str):
@@ -395,6 +412,10 @@ class Transaction:
         self.locktime = 0
         self.version = 1
         self._sign_schnorr = sign_schnorr
+        self.change_addrs="";
+        self.change_index=-1;
+        self.derivation_account=0
+        self.is_hw_wallet=is_hw_wallet
 
         # attribute used by HW wallets to tell the hw keystore about any outputs
         # in the tx that are to self (change), etc. See wallet.py add_hw_info
@@ -531,10 +552,10 @@ class Transaction:
         return d
 
     @classmethod
-    def from_io(klass, inputs, outputs, locktime=0, sign_schnorr=False):
+    def from_io(klass, inputs, outputs, is_hw_wallet, locktime=0, sign_schnorr=False):
         assert all(isinstance(output[1], (PublicKey, Address, ScriptOutput))
                    for output in outputs)
-        self = klass(None)
+        self = klass(None,is_hw_wallet)
         self._inputs = inputs
         self._outputs = outputs.copy()
         self.locktime = locktime
@@ -805,13 +826,61 @@ class Transaction:
         return 0
 
     def serialize(self, estimate_size=False):
+        highest_address_index=0
         nVersion = int_to_hex(self.version, 4)
         nLocktime = int_to_hex(self.locktime, 4)
         inputs = self.inputs()
         outputs = self.outputs()
+
         txins = var_int(len(inputs)) + ''.join(self.serialize_input(txin, self.input_script(txin, estimate_size, self._sign_schnorr), estimate_size) for txin in inputs)
         txouts = var_int(len(outputs)) + ''.join(self.serialize_output(o) for o in outputs)
-        return nVersion + txins + txouts + nLocktime
+
+        sTransaction = nVersion + txins + txouts + nLocktime
+        if (self.is_hw_wallet==True):
+            if ( self.is_complete()==False ):
+                for item in self.inputs():
+                    address = item['address']
+                    is_change = item['is_change']
+                    index = item['index']
+                    if (index>highest_address_index):
+                        highest_address_index=index
+
+                nChangeAddressIndex=int_to_hex(0xffffffff,4) #-1
+                #print("change address: %s, index: %u" % (self.change_addrs, self.change_index))
+                for i in range( len(self.outputs()) ):
+                    if ( str(self._outputs[i][1]) == self.change_addrs ):
+                        nChangeAddressIndex=int_to_hex(i,4)
+
+                        if (self.change_index>highest_address_index):
+                            #print("Replace highest address index with change index")
+                            highest_address_index = self.change_index
+
+                #print("change address at outputs[%s]" % (nChangeAddressIndex))
+
+                #Convert highest address index after taking change index into account
+                nHighestInputAddressIndex=int_to_hex(highest_address_index,4)
+                #print("highest address index: %s" % (nHighestInputAddressIndex))
+
+                nChangeAddressIndex=int_to_hex(0xffffffff,4) #-1
+                #print("change address: %s" % (self.change_addrs))
+                for i in range( len(self.outputs()) ):
+                  if ( str(self._outputs[i][1]) == self.change_addrs ):
+                    #print("Match on %d" % (i) )
+                    nChangeAddressIndex=int_to_hex(i,4)
+                #print("change address index: %s" % (nChangeAddressIndex))
+
+                nDerivation=int_to_hex(self.derivation_account,4)
+                #print("derivation account: %s" %(nDerivation))
+
+                sTransaction = nVersion + txins + txouts + nLocktime +";"+nHighestInputAddressIndex+";"+nChangeAddressIndex+";"+nDerivation
+
+                ba = bytearray(sTransaction,'ascii')
+                crc16 = crcmod.mkCrcFun(0x11021, rev=False, initCrc=0x1D0F, xorOut=0x0000);
+                calculated_crc = crc16(ba)
+                #print("calculated_crc: 0x%x, reversed str: %s " % (calculated_crc, int_to_hex(calculated_crc,2) ))
+                sTransaction += ";"+ int_to_hex(calculated_crc,2)
+
+        return sTransaction
 
     def hash(self):
         warnings.warn("warning: deprecated tx.hash()", FutureWarning, stacklevel=2)
@@ -897,7 +966,11 @@ class Transaction:
 
     def is_complete(self):
         s, r = self.signature_count()
-        return r == s
+        if (r == s):
+          signed=True;
+        else:
+          signed=False;
+        return signed
 
     @staticmethod
     def verify_signature(pubkey, sig, msghash, reason=None):

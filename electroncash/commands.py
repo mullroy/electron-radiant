@@ -181,7 +181,7 @@ class Commands:
         }
 
     @command('')
-    def restore(self, text, passphrase=None, password=None, encrypt_file=True, wallet_path=None):
+    def restore(self, text, passphrase=None, password=None, encrypt_file=True, wallet_path=None, derivation=None):
         """Restore a wallet from text. Text can be a seed phrase, a master
         public key, a master private key, a list of Radiant addresses
         or Radiant private keys.
@@ -192,7 +192,8 @@ class Commands:
                                      passphrase=passphrase,
                                      password=password,
                                      encrypt_file=encrypt_file,
-                                     config=self.config)
+                                     config=self.config,
+                                     derivation=derivation)
         return {
             'path': d['wallet'].storage.path,
             'msg': d['msg'],
@@ -868,6 +869,7 @@ command_options = {
     'change':      (None, "Show only change addresses"),
     'change_addr': ("-c", "Change address. Default is a spare address, or the source address if it's not in the wallet"),
     'domain':      ("-D", "List of addresses"),
+    'derivation':  (None, "BIP39 derivation path. Default: m/44'/0'/0'"),
     'encrypt_file':(None, "Whether the file on disk should be encrypted with the provided password"),
     'entropy':     (None, "Custom entropy"),
     'expiration':  (None, "Time in seconds"),

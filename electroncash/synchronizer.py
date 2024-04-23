@@ -310,7 +310,9 @@ class Synchronizer(ThreadJob):
                 self.print_error("error for tx_hash {}, skipping".format(tx_hash))
                 return
             try:
-                tx = Transaction(result)
+                #This transaction instance is used to determine if the tx is synchronised with the network.
+                #Its not applicable if a hardware wallet is used or not:
+                tx = Transaction(result,False)
                 tx.deserialize()
             except Exception:
                 traceback.print_exc()

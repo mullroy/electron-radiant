@@ -213,6 +213,12 @@ class PayToEdit(PrintError, ScanQRTextEdit):
                 amount = '!'
             else:
                 amount = self.amount_edit.get_amount()
+                if (amount==None):
+                    print("Can't determine the amount. Don't create a transaction")
+                    return None;
+                if (amount==0):
+                    print("The output is 0. Don't create a transaction")
+                    return None;
 
             _type, addr = self.payto_address
             self.outputs = [(_type, addr, amount)]

@@ -160,13 +160,13 @@ class CoinChooserBase(PrintError):
         amounts = [amount for amount in amounts if amount >= dust_threshold]
         change = [(TYPE_ADDRESS, addr, amount)
                   for addr, amount in zip(change_addrs, amounts)]
-        self.print_error('change:', change)
+        self.print_error('change: %s' % (change) )
         if dust:
             self.print_error('not keeping dust', dust)
         return change, dust
 
     def make_tx(self, coins, outputs, change_addrs, fee_estimator,
-                dust_threshold, sign_schnorr=False):
+                dust_threshold, is_hw_wallet, sign_schnorr=False):
         '''Select unspent coins to spend to pay outputs.  If the change is
         greater than dust_threshold (after adding the change output to
         the transaction) it is kept, otherwise none is sent and it is
@@ -177,7 +177,7 @@ class CoinChooserBase(PrintError):
         self.p = PRNG(''.join(sorted(utxos)))
 
         # Copy the ouputs so when adding change we don't modify "outputs"
-        tx = Transaction.from_io([], outputs, sign_schnorr=sign_schnorr)
+        tx = Transaction.from_io([], outputs, is_hw_wallet, sign_schnorr=sign_schnorr)
         # Size of the transaction with no inputs and no change
         base_size = tx.estimated_size()
         spent_amount = tx.output_value()

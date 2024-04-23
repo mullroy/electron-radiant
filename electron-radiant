@@ -28,7 +28,7 @@
 # SOFTWARE.
 import os
 import sys
-
+from electroncash.bitcoin import *
 # Workaround for PyQt5 5.12.3
 # see https://github.com/pyinstaller/pyinstaller/issues/4293
 if sys.platform == "win32" and hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'):
@@ -148,11 +148,15 @@ def run_non_rpc(simple_config):
     sys.exit(0)
 
 
-def restore_wallet(simple_config, password_dialog, storage):
+def restore_wallet(simple_config, password_dialog, storage, derivation=None):
     " Restore an existing wallet "
     text = simple_config.get('text').strip()
     passphrase = simple_config.get('passphrase', '')
-    password = password_dialog() if keystore.is_private(text) else None
+    password=None
+    if (len(passphrase)==0):
+      password = password_dialog() if keystore.is_private(text) else None
+
+    derivation = simple_config.get('derivation','')
     if keystore.is_address_list(text):
         wallet = ImportedAddressWallet.from_text(storage, text)
     elif keystore.is_private_key_list(text):
@@ -161,9 +165,9 @@ def restore_wallet(simple_config, password_dialog, storage):
         if keystore.is_seed(text):
             # seed format will be auto-detected with preference order:
             # old, electrum, bip39
-            k = keystore.from_seed(text, passphrase)
+            k = keystore.from_seed(text, passphrase,"",derivation)
         elif keystore.is_master_key(text):
-            k = keystore.from_master_key(text)
+            k = keystore.from_master_key(text,derivation)
         else:
             sys.exit("Error: Seed or key not recognized")
         if password:

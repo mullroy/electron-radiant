@@ -33,6 +33,7 @@ import sys
 import threading
 import time
 import traceback
+import crcmod
 from decimal import Decimal as PyDecimal  # Qt 5.12 also exports Decimal
 from functools import partial
 from collections import OrderedDict
@@ -44,7 +45,7 @@ from PyQt5.QtWidgets import *
 
 from electroncash import keystore, get_config
 from electroncash.address import Address, AddressError, ScriptOutput
-from electroncash.bitcoin import COIN, TYPE_ADDRESS, TYPE_SCRIPT
+from electroncash.bitcoin import COIN, TYPE_ADDRESS, TYPE_SCRIPT, rev_hex
 from electroncash import networks
 from electroncash.plugins import run_hook
 from electroncash.i18n import _, ngettext, pgettext
@@ -3385,7 +3386,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         from electroncash.transaction import tx_from_str
         try:
             txt_tx = tx_from_str(txt)
-            tx = Transaction(txt_tx, sign_schnorr=self.wallet.is_schnorr_enabled())
+            is_hw_wallet=self.wallet.is_hardware()
+            tx = Transaction(txt_tx, is_hw_wallet, sign_schnorr=self.wallet.is_schnorr_enabled())
             tx.deserialize()
             if self.wallet:
                 my_coins = self.wallet.get_spendable_coins(None, self.config)
@@ -3477,7 +3479,30 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, PrintError):
         if not text:
             return
         try:
-            tx = self.tx_from_text(text)
+            sResult = self.wallet.is_hardware()
+            if (sResult==True):
+                text = text.replace("\n","");
+                text = text.replace("\r","");
+                text = text.replace(" ","");
+
+                parts=text.split(";")
+                if ((len(parts)!=2) or (len(parts[1]) == 0) ):
+                    print("Invalid nr of parts")
+                    raise SerializationError('transaction doesn\'t contain a crc checksum')                
+                    return
+
+                crc_string= parts[0]
+                crc_val = int(rev_hex(parts[1]),16)
+                #print("CRC value: 0x%x" % (crc_val))
+                ba = bytearray(crc_string,'ascii')
+                crc16 = crcmod.mkCrcFun(0x11021, rev=False, initCrc=0x1D0F, xorOut=0x0000);
+                calculated_crc = crc16(ba)
+                if (crc_val != calculated_crc):
+                    raise SerializationError('transaction crc checksum invalid')
+                tx = self.tx_from_text(crc_string)
+            else:
+                tx = self.tx_from_text(text)
+
             if tx:
                 self.show_transaction(tx)
         except SerializationError as e:

@@ -232,6 +232,7 @@ class Deterministic_KeyStore(Software_KeyStore):
         self.seed = d.get('seed', '')
         self.passphrase = d.get('passphrase', '')
         self.seed_type = d.get('seed_type')
+        self.derivation = d.get('derivation');
 
     def is_deterministic(self):
         return True
@@ -360,6 +361,7 @@ class BIP32_KeyStore(Deterministic_KeyStore, Xpub):
         self.xpub = d.get('xpub')
         self.xprv = d.get('xprv')
         self.derivation = d.get('derivation')
+        #print("derivation from d.get('derivation')=%s" %(self.derivation));
 
     def dump(self):
         d = Deterministic_KeyStore.dump(self)
@@ -383,7 +385,8 @@ class BIP32_KeyStore(Deterministic_KeyStore, Xpub):
             raise InvalidPassword()
 
     def update_password(self, old_password, new_password):
-        self.check_password(old_password)
+        if old_password != None:
+            self.check_password(old_password)
         if new_password == '':
             new_password = None
         if self.has_seed():
@@ -755,8 +758,7 @@ def bip39_to_seed(seed: str, passphrase: str) -> bytes:
     return Mnemonic.mnemonic_to_seed(seed, passphrase)
 
 
-def from_seed(seed, passphrase, is_p2sh=None, *, seed_type='', derivation=None) -> KeyStore:
-    del is_p2sh  # argument totally ignored.  Legacy API.
+def from_seed(seed, passphrase, seed_type='', derivation=None) -> KeyStore:
     if not seed_type:
         seed_type = seed_type_name(seed)  # auto-detect
     if seed_type == 'old':
@@ -796,9 +798,10 @@ def from_old_mpk(mpk):
     keystore.add_master_public_key(mpk)
     return keystore
 
-def from_xpub(xpub):
+def from_xpub(xpub,derivation):
     k = BIP32_KeyStore({})
     k.xpub = xpub
+    k.derivation=derivation
     return k
 
 def from_xprv(xprv):
@@ -808,13 +811,15 @@ def from_xprv(xprv):
     k.xpub = xpub
     return k
 
-def from_master_key(text):
+def from_master_key(text,derivation):
+    # TBD: where do we distinguish the wallet type?
+    #print("keystore::from_master_key(%s,%s)" % (text,derivation) );
     if is_xprv(text):
         k = from_xprv(text)
     elif is_old_mpk(text):
         k = from_old_mpk(text)
     elif is_xpub(text):
-        k = from_xpub(text)
+        k = from_xpub(text,derivation)
     else:
         raise BaseException('Invalid key')
     return k

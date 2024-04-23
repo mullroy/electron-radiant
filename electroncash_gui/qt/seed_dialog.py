@@ -28,10 +28,11 @@ from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
 from electroncash.i18n import _
 from electroncash import mnemonic
+from electroncash.bitcoin import rev_hex
 
 from .util import *
 from .qrtextedit import ShowQRTextEdit, ScanQRTextEdit
-
+import crcmod
 
 def seed_warning_msg(seed, has_der=False, has_ext=False):
     extra = ''
@@ -200,9 +201,72 @@ class KeysLayout(QVBoxLayout):
         return self.text_e.text()
 
     def on_edit(self):
-        b = bool(self.is_valid(self.get_text()))
-        self.parent.next_button.setEnabled(b)
+        text = self.get_text()
+        b=False
+        # Is this a Pirate Plus hardware wallet address?
+        # Get a single delimiter between the addresses:
+        # Replace space with newline
+        text = text.replace(" ","\n");
+        # Split on newline
+        lines = text.split("\n");
 
+        bType=-1;
+        iEvaluatedLines=0;
+        for address in lines:
+          if (len(address)==0):
+            continue;
+          iEvaluatedLines+=1;
+          parts = address.split(";");
+          if ( (len(parts) == 3) and (len(parts[2]) > 0) ):
+            # Address from hw wallet. Parse parts
+            # [0] - xpub
+            # [1] - derivation path
+            # [2] - crc16 of xpub+path
+            #print("[0] %s" % (parts[0]))
+            #print("[1] %s" % (parts[1]))
+            #print("[2] %s" % (parts[2]))
+
+            #Detected multipart address: Is it a xpub address?
+            if ( parts[0][0:4] != "xpub"):
+              print("on_Edit() Multipart address, but not of type xpub")
+              self.parent.next_button.setEnabled(False)
+              return
+
+            if (len(parts[2])==4):
+              retrieved_crc = int(rev_hex(parts[2]),16)
+
+              #Is the crc valid?
+              crc16 = crcmod.mkCrcFun(0x18005, rev=False, initCrc=0xFFFF, xorOut=0x0000);
+              calculated_crc = crc16(bytearray(parts[0]+";"+parts[1], 'ascii'))
+
+              if (retrieved_crc == calculated_crc):
+                bType=1;
+                b = bool(self.is_valid( parts[0] ))
+                if (b==False):
+                  print("on_Edit() - Invalid address")
+                  self.parent.next_button.setEnabled(False)
+                  return
+              else:
+                print("on_Edit() The checksum of the supplied address is invalid")
+                self.parent.next_button.setEnabled(False)
+                return
+            else:
+              print("on_Edit() checksum invalid length");
+              self.parent.next_button.setEnabled(False)
+              return
+        if(bType==1):
+          if (iEvaluatedLines==1):
+            # The hardware wallet xpub address passed the tests
+            self.parent.next_button.setEnabled(True);
+            return;
+          else:
+            printf("on_Edit() Multiple addresses mixed with xpub. Please enter only one xpub address")
+            self.parent.next_button.setEnabled(False)
+            return
+
+        #These are PC wallet addresses (Non hardware wallet)
+        b = bool(self.is_valid( self.get_text() ))
+        self.parent.next_button.setEnabled(b)
 
 class SeedDialog(WindowModalDialog):
 

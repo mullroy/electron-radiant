@@ -188,6 +188,7 @@ class Abstract_Wallet(PrintError, SPVDelegate):
     max_change_outputs = 3
 
     def __init__(self, storage):
+        self.saved_der="";
         self.electrum_version = PACKAGE_VERSION
         self.storage = storage
         self.thread = None  # this is used by the qt main_window to store a QThread. We just make sure it's always defined as an attribute here.
@@ -369,16 +370,16 @@ class Abstract_Wallet(PrintError, SPVDelegate):
                     elif typ == 'bip39':
                         keystore.seed_type = 'bip39'
                         updated_st = True
-            saved_der = keystore_derivations[i]
+            self.saved_der = keystore_derivations[i]
             der = (keystore.has_derivation() and keystore.derivation) or None
-            if der != saved_der:
+            if der != self.saved_der:
                 if der:
                     # keystore had a derivation, but top-level storage did not
                     # (this branch is typically taken on first run after
                     # restoring from seed or creating a new wallet)
-                    keystore_derivations[i] = saved_der = der
+                    keystore_derivations[i] = self.saved_der = der
                     updated = True
-                elif saved_der:
+                elif self.saved_der:
                     # we had a derivation but keystore did not. This branch is
                     # taken if the user has loaded this wallet with an older
                     # version of Electron Cash. Attempt to restore their
@@ -399,6 +400,7 @@ class Abstract_Wallet(PrintError, SPVDelegate):
 
     @profiler
     def load_transactions(self):
+        is_hw_wallet=self.is_hardware();
         txi = self.storage.get('txi', {})
         self.txi = {tx_hash: self.to_Address_dict(value)
                     for tx_hash, value in txi.items()
@@ -415,7 +417,7 @@ class Abstract_Wallet(PrintError, SPVDelegate):
         tx_list = self.storage.get('transactions', {})
         self.transactions = {}
         for tx_hash, raw in tx_list.items():
-            tx = Transaction(raw)
+            tx = Transaction(raw,is_hw_wallet)
             self.transactions[tx_hash] = tx
             if not self.txi.get(tx_hash) and not self.txo.get(tx_hash) and (tx_hash not in self.pruned_txo_values):
                 self.print_error("removing unreferenced tx", tx_hash)
@@ -639,6 +641,7 @@ class Abstract_Wallet(PrintError, SPVDelegate):
             return True, self.change_addresses.index(address)
         except ValueError:
             pass
+        print("Cant find %s in the addressbook..." %(address))
         assert not isinstance(address, str)
         raise Exception("Address {} not found".format(address))
 
@@ -962,6 +965,7 @@ class Abstract_Wallet(PrintError, SPVDelegate):
         for txo, v in coins.items():
             tx_height, value, is_cb = v
             prevout_hash, prevout_n = txo.split(':')
+            is_change,index = self.get_address_index(address)
             x = {
                 'address':address,
                 'value':value,
@@ -971,6 +975,8 @@ class Abstract_Wallet(PrintError, SPVDelegate):
                 'coinbase':is_cb,
                 'is_frozen_coin':txo in self.frozen_coins or txo in self.frozen_coins_tmp,
                 'slp_token':self.slp.token_info_for_txo(txo),  # (token_id_hex, qty) tuple or None
+                'is_change':is_change,
+                'index':index,
             }
             out[txo] = x
         return out
@@ -1906,6 +1912,8 @@ class Abstract_Wallet(PrintError, SPVDelegate):
             return result
 
     def make_unsigned_transaction(self, inputs, outputs, config, fixed_fee=None, change_addr=None, sign_schnorr=None):
+        is_hw_wallet = self.is_hardware();
+
         ''' sign_schnorr flag controls whether to mark the tx as signing with
         schnorr or not. Specify either a bool, or set the flag to 'None' to use
         whatever the wallet is configured to use from the GUI '''
@@ -1992,16 +2000,23 @@ class Abstract_Wallet(PrintError, SPVDelegate):
 
             coin_chooser = coinchooser.CoinChooserPrivacy()
             tx = coin_chooser.make_tx(inputs, outputs, change_addrs,
-                                      fee_estimator, self.dust_threshold(), sign_schnorr=sign_schnorr)
+                                      fee_estimator, self.dust_threshold(), is_hw_wallet, sign_schnorr=sign_schnorr)
+            if (is_hw_wallet==True):
+                if (len(change_addrs)>0):
+                    sChangeAddr=str(change_addrs[0])
+                    #Just want the index, regardless if its the main or change address book
+                    (bResult, iChangeIndex) = self.get_address_index( change_addrs[0] )
+                
+                    tx.set_change_address(sChangeAddr,iChangeIndex)
         else:
             sendable = sum(map(lambda x:x['value'], inputs))
             _type, data, value = outputs[i_max]
             outputs[i_max] = (_type, data, 0)
-            tx = Transaction.from_io(inputs, outputs, sign_schnorr=sign_schnorr)
+            tx = Transaction.from_io(inputs, outputs, is_hw_wallet, sign_schnorr=sign_schnorr)
             fee = fee_estimator(tx.estimated_size())
             amount = max(0, sendable - tx.output_value() - fee)
             outputs[i_max] = (_type, data, amount)
-            tx = Transaction.from_io(inputs, outputs, sign_schnorr=sign_schnorr)
+            tx = Transaction.from_io(inputs, outputs, is_hw_wallet, sign_schnorr=sign_schnorr)
 
         # If user tries to send too big of a fee (more than 500000 sat/byte), stop them from shooting themselves in the foot
         tx_in_bytes=tx.estimated_size()
@@ -2012,13 +2027,29 @@ class Abstract_Wallet(PrintError, SPVDelegate):
 
         # Sort the inputs and outputs deterministically
         tx.BIP_LI01_sort()
+
+        derivation_account=0;
+        if (is_hw_wallet==True):
+            if ( (self.saved_der != None ) and (len(self.saved_der)>0) ):
+                #print("Derivation account: %s" %(self.saved_der))
+                #print("keystore has derivation");
+                parts = self.saved_der.split("/");
+                #print("derivation parts: %s" % (parts))
+                if (len(parts)==4):
+                    derivation_account=(int)(parts[3].replace("'",""))
+                    #print("Account= %d" % (derivation_account))
+                else:
+                    raise ValueError("Could not parse the derivation path for the wallet. Current value is:\"%s\". Derivatin path of the form m/44'/0'/0'" % (self.saved_der) )
+            else:
+                print("No derivation - using default: m/44'/0'/0'");
+            tx.set_derivation_account(derivation_account)        
+        
         # Timelock tx to current height.
         locktime = self.get_local_height()
         if locktime == -1: # We have no local height data (no headers synced).
             locktime = 0
         tx.locktime = locktime
         run_hook('make_unsigned_transaction', self, tx)
-
         return tx
 
     def mktx(self, outputs, password, config, fee=None, change_addr=None, domain=None, sign_schnorr=None):
@@ -2616,7 +2647,16 @@ class Abstract_Wallet(PrintError, SPVDelegate):
         return False
 
     def is_hardware(self):
-        return any([isinstance(k, Hardware_KeyStore) for k in self.get_keystores()])
+        #return any([isinstance(k, Hardware_KeyStore) for k in self.get_keystores()])
+        try:
+            sResult = self.storage.get('is_pirate_plus_hw_wallet','false')
+            if (sResult=='true'):
+              return True;
+            else:
+              return False;
+        except:
+            print("Call to storage.get() failed. Set is_hw_wallet to false")
+            return False;
 
     def add_address(self, address, *, for_change=False):
         assert isinstance(address, Address)
@@ -3508,7 +3548,7 @@ def create_new_wallet(*, path, config, passphrase=None, password=None,
 
 def restore_wallet_from_text(text, *, path, config,
                              passphrase=None, password=None, encrypt_file=True,
-                             gap_limit=None) -> dict:
+                             gap_limit=None, derivation=None) -> dict:
     """Restore a wallet from text. Text can be a seed phrase, a master
     public key, a master private key, a list of bitcoin addresses
     or bitcoin private keys."""
@@ -3528,11 +3568,12 @@ def restore_wallet_from_text(text, *, path, config,
         if keystore.is_master_key(text):
             k = keystore.from_master_key(text)
         elif keystore.is_seed(text):
-            k = keystore.from_seed(text, passphrase)  # auto-detects seed type, preference order: old, electrum, bip39
+            k = keystore.from_seed(text, passphrase, seed_type="bip39", derivation=derivation)  # auto-detects seed type, preference order: old, electrum, bip39
         else:
             raise Exception("Seed or key not recognized")
         storage.put('keystore', k.dump())
         storage.put('wallet_type', 'standard')
+        storage.put('is_pirate_plus_hw_wallet', 'false')
         seed_type = getattr(k, 'seed_type', None)
         if seed_type:
             storage.put('seed_type', seed_type)  # Save, just in case
