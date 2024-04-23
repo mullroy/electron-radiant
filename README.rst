@@ -56,17 +56,11 @@ If you cloned the git repository, you need to compile extra files
 before you can run Electron Radiant. Read the next section, "Development
 Version".
 
-Hardware Wallet - Ledger Nano S (NOT YET SUPPORTED, MUST VERIFY)
--------------------------------
+Hardware Wallet
+---------------
+Electron Radiant supports the Pirate Plus hardware wallet. To interface with the hardware wallet you'll need the Qt GUI application, which acts as a bridge between the hardware wallet and PC. This software can be obtained from the Mullroy Github repository: https://github.com/mullroy/pirate_hardware_interface
 
-Electron Radiant natively support Ledger Nano S hardware wallet. If you plan to use
-you need an additional dependency, namely btchip. To install it run this command::
-
-    sudo pip3 install btchip-python
-
-If you still have problems connecting to your Nano S please have a look at this
-`troubleshooting <https://support.ledger.com/hc/en-us/articles/115005165269-Fix-connection-issues>`_ section on Ledger website.
-
+To order a Pirate Plus hardware wallet, follow the instructions on the main Github page: https://github.com/mullroy
 
 Development version
 ===================
