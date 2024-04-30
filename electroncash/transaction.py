@@ -1211,7 +1211,8 @@ class Transaction:
                             # Python's memory use being less efficient than the
                             # binary-only raw bytes.  So if you modify this code
                             # do bear that in mind.
-                            tx = Transaction(tx.raw)
+                            is_hw_wallet=wallet.is_hardware();
+                            tx = Transaction(tx.raw,is_hw_wallet)
                             try:
                                 tx.deserialize()
                                 # The below txid check is commented-out as
